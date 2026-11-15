@@ -25,19 +25,21 @@ jobs:
           docker exec kali-vps apt-get update -qq && docker exec kali-vps apt-get install -y -qq openssh-server curl wget iproute2 procps iptables
 
           # =========================================================================
-          # 2. OPENSSH SERVER CONFIGURATION
+          # 2. OPENSSH SERVER CONFIGURATION (With Password Auth Override)
           # =========================================================================
           echo "=== Configuring OpenSSH for Root Access in Kali ==="
           docker exec kali-vps bash -c "echo 'root:root' | chpasswd"
-          docker exec kali-vps sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-          docker exec kali-vps sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          docker exec kali-vps sed -i 's/^#*ChallengeResponseAuthentication.*/ChallengeResponseAuthentication yes/' /etc/ssh/sshd_config
+          
+          # Enforce root login and password auth via sshd_config.d drop-in override
+          docker exec kali-vps bash -c "mkdir -p /etc/ssh/sshd_config.d && echo -e 'PermitRootLogin yes\nPasswordAuthentication yes' > /etc/ssh/sshd_config.d/99-root-access.conf"
+          
           docker exec kali-vps mkdir -p /run/sshd
+          docker exec kali-vps pkill sshd || true
           docker exec -d kali-vps /usr/sbin/sshd -D
-          echo "OpenSSH service successfully started."
+          echo "OpenSSH service successfully configured and running."
 
           # =========================================================================
-          # 3. TAILSCALE STATIC INSTALLATION & USESPACE DAEMON RUN
+          # 3. TAILSCALE STATIC INSTALLATION & USERSPACE DAEMON RUN
           # =========================================================================
           echo "=== Installing Tailscale via Static Binary (No systemd) ==="
           docker exec kali-vps bash -c "curl -fsSL https://pkgs.tailscale.com/stable/tailscale_latest_amd64.tgz -o tailscale.tgz"
