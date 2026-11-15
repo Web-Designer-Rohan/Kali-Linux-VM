@@ -16,7 +16,7 @@ jobs:
           set -e
 
           # =========================================================================
-          # 1. START KALI LINUX DOCKER CONTAINER (Privileged & Net Host)
+          # 1. START KALI LINUX DOCKER CONTAINER
           # =========================================================================
           echo "=== Starting Kali Linux Container (kali-rolling) ==="
           docker run -d --name kali-vps --net=host --privileged kalilinux/kali-rolling sleep infinity
@@ -25,40 +25,35 @@ jobs:
           docker exec kali-vps apt-get update -qq && docker exec kali-vps apt-get install -y -qq openssh-server curl wget iproute2 procps iptables
 
           # =========================================================================
-          # 2. OPENSSH SERVER CONFIGURATION (Manual Background Startup)
+          # 2. OPENSSH SERVER CONFIGURATION
           # =========================================================================
           echo "=== Configuring OpenSSH for Root Access in Kali ==="
-          
-          # Set root password to 'root'
           docker exec kali-vps bash -c "echo 'root:root' | chpasswd"
-
-          # Configure SSH to allow root login and password authentication
           docker exec kali-vps sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
           docker exec kali-vps sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
           docker exec kali-vps sed -i 's/^#*ChallengeResponseAuthentication.*/ChallengeResponseAuthentication yes/' /etc/ssh/sshd_config
-
-          # Create required runtime privilege directories for sshd
           docker exec kali-vps mkdir -p /run/sshd
-
-          # Start OpenSSH daemon directly in the background (Bypassing systemctl)
           docker exec -d kali-vps /usr/sbin/sshd -D
-          echo "OpenSSH service successfully started via background daemon."
+          echo "OpenSSH service successfully started."
 
           # =========================================================================
-          # 3. TAILSCALE INSTALLATION & USERSPACE CONNECTION
+          # 3. TAILSCALE STATIC INSTALLATION & USESPACE DAEMON RUN
           # =========================================================================
-          echo "=== Installing & Starting Tailscale inside Kali ==="
-          docker exec kali-vps bash -c "curl -fsSL https://tailscale.com/install.sh | sh"
+          echo "=== Installing Tailscale via Static Binary (No systemd) ==="
+          docker exec kali-vps bash -c "curl -fsSL https://pkgs.tailscale.com/stable/tailscale_latest_amd64.tgz -o tailscale.tgz"
+          docker exec kali-vps bash -c "tar -xzf tailscale.tgz"
+          docker exec kali-vps bash -c "cp tailscale_*_amd64/tailscaled /usr/sbin/tailscaled && cp tailscale_*_amd64/tailscale /usr/bin/tailscale"
+          docker exec kali-vps mkdir -p /var/lib/tailscale
 
           if [ -z "$TAILSCALE_AUTHKEY" ]; then
             echo "::error::Secret TAILSCALE_AUTHKEY is missing! Add it in Repository Settings -> Secrets and variables -> Actions."
             exit 1
           fi
 
-          # Start tailscaled daemon in userspace/background mode without systemd
-          docker exec -d kali-vps tailscaled --tun=userspace-networking
+          # Start tailscaled in background using userspace networking (bypassing systemd)
+          docker exec -d kali-vps tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state
 
-          # Give tailscaled a brief moment to spin up sockets
+          # Give tailscaled a brief moment to initialize sockets
           sleep 3
 
           # Connect Tailscale using the authkey
