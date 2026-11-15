@@ -9,7 +9,7 @@ jobs:
       - name: Initialize Kali Linux VPS Environment
         run: echo "Initializing Kali Linux container pipeline..."
 
-      - name: Start Kali Linux Container & Configure Root SSH & Tailscale
+      - name: Start Kali Linux Container & Configure Passwordless SSH & Tailscale
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
@@ -25,18 +25,20 @@ jobs:
           docker exec kali-vps apt-get update -qq && docker exec kali-vps apt-get install -y -qq openssh-server curl wget iproute2 procps iptables
 
           # =========================================================================
-          # 2. OPENSSH SERVER CONFIGURATION (With Password Auth Override)
+          # 2. OPENSSH SERVER CONFIGURATION (Passwordless / Empty Password)
           # =========================================================================
-          echo "=== Configuring OpenSSH for Root Access in Kali ==="
-          docker exec kali-vps bash -c "echo 'root:root' | chpasswd"
+          echo "=== Configuring OpenSSH for Passwordless Root Access ==="
           
-          # Enforce root login and password auth via sshd_config.d drop-in override
-          docker exec kali-vps bash -c "mkdir -p /etc/ssh/sshd_config.d && echo -e 'PermitRootLogin yes\nPasswordAuthentication yes' > /etc/ssh/sshd_config.d/99-root-access.conf"
+          # Delete the root password entirely
+          docker exec kali-vps passwd -d root
+          
+          # Enforce root login and permit empty passwords via sshd_config.d override
+          docker exec kali-vps bash -c "mkdir -p /etc/ssh/sshd_config.d && echo -e 'PermitRootLogin yes\nPermitEmptyPasswords yes\nPasswordAuthentication yes' > /etc/ssh/sshd_config.d/99-root-access.conf"
           
           docker exec kali-vps mkdir -p /run/sshd
           docker exec kali-vps pkill sshd || true
           docker exec -d kali-vps /usr/sbin/sshd -D
-          echo "OpenSSH service successfully configured and running."
+          echo "OpenSSH service successfully configured for passwordless access."
 
           # =========================================================================
           # 3. TAILSCALE STATIC INSTALLATION & USERSPACE DAEMON RUN
@@ -72,7 +74,7 @@ jobs:
           echo "================================================================="
           echo "Tailscale IP   : $TS_IP"
           echo "Username       : root"
-          echo "Password       : root"
+          echo "Password       : None (Passwordless)"
           echo ""
           echo "Connect directly via your terminal (Make sure Tailscale is active on your device):"
           echo "  ssh root@$TS_IP"
