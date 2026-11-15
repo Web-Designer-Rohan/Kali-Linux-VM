@@ -1,0 +1,84 @@
+name: Kali Linux Root VPS (Tailscale)
+on: workflow_dispatch
+
+jobs:
+  vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Initialize Kali Linux VPS Environment
+        run: echo "Initializing Kali Linux container pipeline..."
+
+      - name: Start Kali Linux Container & Configure Root SSH & Tailscale
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          set -e
+
+          # =========================================================================
+          # 1. START KALI LINUX DOCKER CONTAINER
+          # =========================================================================
+          echo "=== Starting Kali Linux Container (kali-rolling) ==="
+          docker run -d --name kali-vps --net=host --privileged kalilinux/kali-rolling sleep infinity
+
+          echo "=== Updating Package Lists & Installing Essentials ==="
+          docker exec kali-vps apt-get update -qq && docker exec kali-vps apt-get install -y -qq openssh-server curl wget iproute2 procps
+
+          # Optional: Uncomment below if you want core Kali pentesting tools installed (increases build time)
+          # docker exec kali-vps apt-get install -y -qq kali-linux-core || true
+
+          # =========================================================================
+          # 2. OPENSSH SERVER INSTALLATION & ROOT ACCESS CONFIGURATION
+          # =========================================================================
+          echo "=== Configuring OpenSSH for Root Access in Kali ==="
+          
+          # Set root password to 'root'
+          docker exec kali-vps bash -c "echo 'root:root' | chpasswd"
+
+          # Configure SSH to allow root login and password authentication
+          docker exec kali-vps sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+          docker exec kali-vps sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          docker exec kali-vps sed -i 's/^#*ChallengeResponseAuthentication.*/ChallengeResponseAuthentication yes/' /etc/ssh/sshd_config
+          docker exec kali-vps sed -i 's/^#*ClientAliveInterval.*/ClientAliveInterval 30/' /etc/ssh/sshd_config
+          docker exec kali-vps sed -i 's/^#*ClientAliveCountMax.*/ClientAliveCountMax 10/' /etc/ssh/sshd_config
+
+          # Start OpenSSH Server
+          docker exec kali-vps service ssh start
+          echo "OpenSSH service successfully started inside Kali container."
+
+          # =========================================================================
+          # 3. TAILSCALE INSTALLATION & CONNECTION
+          # =========================================================================
+          echo "=== Installing & Starting Tailscale inside Kali ==="
+          docker exec kali-vps bash -c "curl -fsSL https://tailscale.com/install.sh | sh"
+
+          if [ -z "$TAILSCALE_AUTHKEY" ]; then
+            echo "::error::Secret TAILSCALE_AUTHKEY is missing! Add it in Repository Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          # Connect Tailscale with custom hostname and accept SSH traffic
+          docker exec kali-vps tailscale up --authkey="${TAILSCALE_AUTHKEY}" --hostname="kali-vps-$(openssl rand -hex 3)" --ssh=false --accept-routes
+
+          # Retrieve Tailscale IP address (IPv4)
+          TS_IP=$(docker exec kali-vps tailscale ip -4)
+
+          # =========================================================================
+          # 4. CONNECTION BLUEPRINT
+          # =========================================================================
+          echo "================================================================="
+          echo "           KALI LINUX VPS READY FOR CONNECTION                   "
+          echo "================================================================="
+          echo "Tailscale IP   : $TS_IP"
+          echo "Username       : root"
+          echo "Password       : root"
+          echo ""
+          echo "Connect directly via your terminal (Make sure Tailscale is active on your device):"
+          echo "  ssh root@$TS_IP"
+          echo "================================================================="
+
+          # =========================================================================
+          # 5. KEEP ALIVE (6 Hours Max Runtime)
+          # =========================================================================
+          echo "Kali VPS session active. Sleeping for up to 6 hours..."
+          sleep 21600
