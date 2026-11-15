@@ -16,19 +16,16 @@ jobs:
           set -e
 
           # =========================================================================
-          # 1. START KALI LINUX DOCKER CONTAINER
+          # 1. START KALI LINUX DOCKER CONTAINER (Privileged & Net Host)
           # =========================================================================
           echo "=== Starting Kali Linux Container (kali-rolling) ==="
           docker run -d --name kali-vps --net=host --privileged kalilinux/kali-rolling sleep infinity
 
           echo "=== Updating Package Lists & Installing Essentials ==="
-          docker exec kali-vps apt-get update -qq && docker exec kali-vps apt-get install -y -qq openssh-server curl wget iproute2 procps
-
-          # Optional: Uncomment below if you want core Kali pentesting tools installed (increases build time)
-          # docker exec kali-vps apt-get install -y -qq kali-linux-core || true
+          docker exec kali-vps apt-get update -qq && docker exec kali-vps apt-get install -y -qq openssh-server curl wget iproute2 procps iptables
 
           # =========================================================================
-          # 2. OPENSSH SERVER INSTALLATION & ROOT ACCESS CONFIGURATION
+          # 2. OPENSSH SERVER CONFIGURATION (Manual Background Startup)
           # =========================================================================
           echo "=== Configuring OpenSSH for Root Access in Kali ==="
           
@@ -39,15 +36,16 @@ jobs:
           docker exec kali-vps sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
           docker exec kali-vps sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
           docker exec kali-vps sed -i 's/^#*ChallengeResponseAuthentication.*/ChallengeResponseAuthentication yes/' /etc/ssh/sshd_config
-          docker exec kali-vps sed -i 's/^#*ClientAliveInterval.*/ClientAliveInterval 30/' /etc/ssh/sshd_config
-          docker exec kali-vps sed -i 's/^#*ClientAliveCountMax.*/ClientAliveCountMax 10/' /etc/ssh/sshd_config
 
-          # Start OpenSSH Server
-          docker exec kali-vps service ssh start
-          echo "OpenSSH service successfully started inside Kali container."
+          # Create required runtime privilege directories for sshd
+          docker exec kali-vps mkdir -p /run/sshd
+
+          # Start OpenSSH daemon directly in the background (Bypassing systemctl)
+          docker exec -d kali-vps /usr/sbin/sshd -D
+          echo "OpenSSH service successfully started via background daemon."
 
           # =========================================================================
-          # 3. TAILSCALE INSTALLATION & CONNECTION
+          # 3. TAILSCALE INSTALLATION & USERSPACE CONNECTION
           # =========================================================================
           echo "=== Installing & Starting Tailscale inside Kali ==="
           docker exec kali-vps bash -c "curl -fsSL https://tailscale.com/install.sh | sh"
@@ -57,8 +55,14 @@ jobs:
             exit 1
           fi
 
-          # Connect Tailscale with custom hostname and accept SSH traffic
-          docker exec kali-vps tailscale up --authkey="${TAILSCALE_AUTHKEY}" --hostname="kali-vps-$(openssl rand -hex 3)" --ssh=false --accept-routes
+          # Start tailscaled daemon in userspace/background mode without systemd
+          docker exec -d kali-vps tailscaled --tun=userspace-networking
+
+          # Give tailscaled a brief moment to spin up sockets
+          sleep 3
+
+          # Connect Tailscale using the authkey
+          docker exec kali-vps tailscale up --authkey="${TAILSCALE_AUTHKEY}" --hostname="kali-vps-$(openssl rand -hex 3)" --accept-routes
 
           # Retrieve Tailscale IP address (IPv4)
           TS_IP=$(docker exec kali-vps tailscale ip -4)
